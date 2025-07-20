@@ -158,6 +158,56 @@ class IEMOCAP_Dataset(Dataset):
             'label': self.label_map[label]
         }
 
+class ASVspoof2019_Dataset(Dataset):
+    def __init__(self, metadata_path: str, audio_folder: str, audio_extension: str = '.flac'):
+        '''
+        Initialize the dataset.
+        Args:
+            metadata_path: path to the metadata file
+            audio_folder: path to the folder containing audio files
+            audio_extension: audio file extension (default: '.flac')
+        '''
+        self.audio_folder = audio_folder
+        self.audio_extension = audio_extension
+        self.data = []
+        
+        # Create label map (same structure as IEMOCAP)
+        self.label_map = {
+            'bonafide': 0,
+            'spoof': 1
+        }
+        
+        # Read metadata file
+        with open(metadata_path, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 5:  # Ensure we have enough columns
+                    filename = parts[1]  # Second column
+                    label = parts[-1]    # Last column
+                    
+                    # Create full audio path
+                    audio_path = os.path.join(audio_folder, f"{filename}{audio_extension}")
+                    
+                    self.data.append({
+                        'audio_path': audio_path,
+                        'label': label,  # Keep original label string
+                        'filename': filename
+                    })
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        
+        # Load audio waveform
+        waveform, sample_rate = torchaudio.load(item['audio_path'])
+        
+        return {
+            'waveform': waveform,
+            'label': self.label_map[item['label']]  # Map label using label_map
+        }
+
 
 class PadCollator:
     def __init__(self, mode='train', fixed_len=16000 * 4):
@@ -268,6 +318,102 @@ class IEMOCAP_DataLoader:
             self.test_dataset,
             batch_size=batch_size,
             shuffle=shuffle,
+            num_workers=num_workers,
+            collate_fn=test_collator
+        )
+        return train_loader, val_loader, test_loader
+
+class ASVspoof2019_DataLoader:
+    def __init__(
+        self,
+        train_metadata_path: str,    # Path to train metadata file
+        train_audio_folder: str,     # Path to train audio folder
+        dev_metadata_path: str,      # Path to dev metadata file  
+        dev_audio_folder: str,       # Path to dev audio folder
+        audio_extension: str = '.flac',  # Audio file extension
+        ratios: list = [0.8, 0.2],   # Only for train/val split
+    ):
+        '''
+        Initialize the dataloader.
+        Args:
+            train_metadata_path: path to the training metadata file
+            train_audio_folder: path to the training audio folder
+            dev_metadata_path: path to the dev metadata file
+            dev_audio_folder: path to the dev audio folder
+            audio_extension: audio file extension (default: '.flac')
+            ratios: [train_ratio, val_ratio] for splitting training data
+        '''
+        self.logger = logging.getLogger('ASVspoof_DataLoader')
+        self.logger.info('Initialized')
+        
+        # Validate training dataset paths
+        assert Path(train_metadata_path).exists(), f'File {train_metadata_path} does not exist'
+        assert Path(train_audio_folder).exists(), f'Folder {train_audio_folder} does not exist'
+        
+        # Validate dev dataset paths
+        assert Path(dev_metadata_path).exists(), f'File {dev_metadata_path} does not exist'
+        assert Path(dev_audio_folder).exists(), f'Folder {dev_audio_folder} does not exist'
+        
+        self.logger.info(f'Loading training dataset from {train_metadata_path}')
+        self.logger.info(f'Loading dev dataset from {dev_metadata_path}')
+        
+        # Load training dataset and split for train/val
+        train_dataset = ASVspoof2019_Dataset(
+            metadata_path=train_metadata_path,
+            audio_folder=train_audio_folder,
+            audio_extension=audio_extension
+        )
+        
+        self.train_size = int(len(train_dataset) * ratios[0])
+        self.val_size = len(train_dataset) - self.train_size
+        
+        train_split, val_split = random_split(
+            train_dataset,
+            [self.train_size, self.val_size]
+        )
+        
+        # Load separate dev dataset for testing
+        test_dataset = ASVspoof2019_Dataset(
+            metadata_path=dev_metadata_path,
+            audio_folder=dev_audio_folder,
+            audio_extension=audio_extension
+        )
+        
+        self.train_dataset: Subset = train_split
+        self.val_dataset: Subset = val_split
+        self.test_dataset: Dataset = test_dataset  # This uses the dev set
+    
+    def get_dataloader(self, batch_size: int = 32, num_workers: int = 4, shuffle: bool = True):
+        '''
+        Get the dataloader.
+        Args:
+            batch_size: batch size
+            num_workers: number of worker processes
+            shuffle: whether to shuffle the training dataset (val/test are never shuffled)
+        '''
+        
+        train_collator = PadCollator(mode='train')
+        val_collator = PadCollator(mode='val')
+        test_collator = PadCollator(mode='test')
+        
+        train_loader = DataLoader(
+            self.train_dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,  # Only shuffle training data
+            num_workers=num_workers,
+            collate_fn=train_collator
+        )
+        val_loader = DataLoader(
+            self.val_dataset,
+            batch_size=batch_size,
+            shuffle=False,  # Never shuffle validation
+            num_workers=num_workers,
+            collate_fn=val_collator
+        )
+        test_loader = DataLoader(
+            self.test_dataset,
+            batch_size=batch_size,
+            shuffle=False,  # Never shuffle test
             num_workers=num_workers,
             collate_fn=test_collator
         )

@@ -1,0 +1,41 @@
+common:
+  _name: default
+  seed: 39
+  device: cuda
+
+model:
+  _name: ASVspoofWav2vec2Conformer
+  hidden_dim: 384
+  frontend_model:
+    _name: wav2vec2-large
+    path: /home/brant/Projects/conformer/pretrained_ckpt/LL_relpos_PT_no_FT
+    freeze: True
+
+dataset:
+  _name: ASVSpoof2019
+  lable_map:
+    bonafide: 0
+    spoofed: 1
+  train_metadata_path: /home/brant/Projects/asvspoof/LA/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt
+  train_audio_folder: /home/brant/Projects/asvspoof/LA/ASVspoof2019_LA_train
+  dev_metadata_path: /home/brant/Projects/asvspoof/LA/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt
+  dev_audio_folder: /home/brant/Projects/asvspoof/LA/ASVspoof2019_LA_dev
+  audio_extension: .flac
+  ratio: [0.85, 0.15]
+  batch_size: 32
+  num_workers: 28
+
+train:
+  fold: 1
+  epoch: 200
+
+optimizer:
+  _name: adam
+  lr: 5e-4
+  weight_decay: 1e-4
+
+scheduler:
+  _name: cosine
+  T_max: 200
+  eta_min: 1e-5
+  last_epoch: -1

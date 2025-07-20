@@ -16,8 +16,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 
 from config import Config
-from dataset import IEMOCAP_DataLoader
-from model import EmotionWav2vec2Conformer
+from dataset import IEMOCAP_DataLoader, ASVspoof2019_DataLoader
+from model import EmotionWav2vec2Conformer, ASVspoofWav2vec2Conformer
 
 
 class Trainer:
@@ -83,10 +83,10 @@ class Trainer:
     
     def train(
             self,
-            model: EmotionWav2vec2Conformer,
+            model: ASVspoofWav2vec2Conformer,
             optimizer: torch.optim.Optimizer,
             criterion: torch.nn,
-            train_loader: IEMOCAP_DataLoader
+            train_loader: ASVspoof2019_DataLoader
         ):
         '''
         Train the model.
@@ -115,10 +115,10 @@ class Trainer:
     @torch.no_grad()
     def val_test(
             self,
-            model: EmotionWav2vec2Conformer,
+            model: ASVspoofWav2vec2Conformer,
             criterion: torch.nn.Module,
-            val_loader: IEMOCAP_DataLoader,
-            test_loader: IEMOCAP_DataLoader
+            val_loader: ASVspoof2019_DataLoader,
+            test_loader: ASVspoof2019_DataLoader
         ):
         '''
         Validate and test the model.
@@ -148,10 +148,10 @@ class Trainer:
         res = {
             'val_loss': loss[0] / len(val_loader),
             'val_acc': 100 * correct[0] / total[0],
-            'val_f1': 100 * (2 * correct[0] / (total[0] + correct[0])),
+            #'val_f1': 100 * (2 * correct[0] / (total[0] + correct[0])),
             'test_loss': loss[1] / len(test_loader),
             'test_acc': 100 * correct[1] / total[1],
-            'test_f1': 100 * (2 * correct[1] / (total[1] + correct[1]))
+            #'test_f1': 100 * (2 * correct[1] / (total[1] + correct[1]))
         }
         return res
     
@@ -176,20 +176,25 @@ class Trainer:
         ascii_table = tabulate(table[1:], headers=table[0], tablefmt='grid')
         self.logger.info('\n' + ascii_table)
     
-    def k_fold_train(self, model: EmotionWav2vec2Conformer):
+    def k_fold_train(self, model: ASVspoofWav2vec2Conformer):
         '''
         Train the model using k-fold cross-validation.
         '''
         torch.manual_seed(self.cfg.common.seed)
         torch.cuda.manual_seed(self.cfg.common.seed)
         
-        train_loader, val_loader, test_loader = IEMOCAP_DataLoader(
-            d_path=self.cfg.dataset.d_path,
-            ratios=self.cfg.dataset.ratio,
+        train_loader, val_loader = ASVspoof2019_DataLoader(
+            train_metadata_path=self.cfg.dataset.train_metadata_path,
+            train_audio_folder=self.cfg.dataset.train_audio_folder,
+            dev_metadata_path=self.cfg.dataset.dev_metadata_path,
+            dev_audio_folder=self.cfg.dataset.dev_audio_folder,
+            audio_extension=self.cfg.dataset.audio_extension,
+            ratios=self.cfg.dataset.ratios,
         ).get_dataloader(
             batch_size=self.cfg.dataset.batch_size,
             num_workers=self.cfg.dataset.num_workers
         )
+
         
         self.logger.info(model)
         
@@ -214,7 +219,7 @@ class Trainer:
         
         last_test_acc = 0.0
         test_acc_avg = 0.0
-        test_f1_avg = 0.0
+        #test_f1_avg = 0.0
         
         # start the resource metric collector
         self.collector.start('resource')
@@ -241,7 +246,7 @@ class Trainer:
                 self.logger.info(formatted_res)
                 
                 test_acc_avg += res['test_acc']
-                test_f1_avg += res['test_f1']
+                #test_f1_avg += res['test_f1']
                 
                 # write to tensorboard
                 self.write_tensorboard(res, epoch)
@@ -260,19 +265,22 @@ class Trainer:
 
 
 if __name__ == '__main__':
-    CONFIG_NAME = 'custom'
+    CONFIG_NAME = 'asv19'
     
-    with open(f'/home/poyu39/github/poyu39/emotion-conformer/config/{CONFIG_NAME}.yaml', 'r') as f:
+    with open(f'/home/brant/Projects/emotion-conformer/config/{CONFIG_NAME}.yaml', 'r') as f:
         yaml_cfg = yaml.safe_load(f)
     pre_config = OmegaConf.create(yaml_cfg)
     
-    label_map : dict = np.load(pre_config.dataset.d_path + '/label_map.npy', allow_pickle=True).item()
+    label_map : dict = pre_config.dataset.lable_map
+    if not label_map:
+        raise ValueError("Label map is empty. Please provide a valid label map in the configuration.")
     idx_to_label = {v: k for k, v in label_map.items()}
     
-    model = EmotionWav2vec2Conformer(
+    model = ASVspoofWav2vec2Conformer(
         checkpoint_path=pre_config.model.frontend_model.path,
         hidden_dim=pre_config.model.hidden_dim,
-        num_classes=len(label_map),
+        freeze_frontend=pre_config.model.get('freeze_frontend', True),
+        device=pre_config.common.device
     )
     
     cs = ConfigStore.instance()
